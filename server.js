@@ -1,5 +1,5 @@
 // ===================================================
-// SERVIDOR ROBLOX IMPORT/EXPORT - VERSÃO COMPLETA
+// SERVIDOR ROBLOX IMPORT/EXPORT - VERSÃO CORRIGIDA
 // Deploy: Render.com
 // ===================================================
 
@@ -23,8 +23,10 @@ app.use(cors());
 
 // Rate limiting
 const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutos
-    max: 100 // Máximo de 100 requisições
+    windowMs: 15 * 60 * 1000,
+    max: 100,
+    standardHeaders: true,
+    legacyHeaders: false,
 });
 app.use(limiter);
 
@@ -54,7 +56,7 @@ function storeKey(apiKey) {
     apiKeys.set(hash, {
         key: apiKey,
         createdAt: Date.now(),
-        expiresAt: Date.now() + (30 * 60 * 1000) // 30 minutos
+        expiresAt: Date.now() + (30 * 60 * 1000)
     });
     console.log(`✅ Nova key armazenada: ${hash.substring(0, 8)}...`);
     return hash;
@@ -186,7 +188,8 @@ async function uploadToRoblox(apiKey, fileBuffer, assetType, name, description) 
                     name: name,
                     description: description || '',
                     genreTypeId: 1
-                }
+                },
+                timeout: 30000
             }
         );
         
@@ -201,12 +204,16 @@ async function uploadToRoblox(apiKey, fileBuffer, assetType, name, description) 
 // ROTAS
 // ===================================================
 
+// Health check simples
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // Página inicial
 app.get('/', (req, res) => {
     const uptime = process.uptime();
     const hours = Math.floor(uptime / 3600);
     const minutes = Math.floor((uptime % 3600) / 60);
-    const seconds = Math.floor(uptime % 60);
     
     res.send(`
 <!DOCTYPE html>
@@ -242,7 +249,6 @@ app.get('/', (req, res) => {
             text-align: center;
         }
         .status-badge {
-            display: inline-block;
             background: #10b981;
             color: white;
             padding: 8px 20px;
@@ -418,18 +424,15 @@ app.post('/api/key/generate', (req, res) => {
     try {
         const { userId, username } = req.body;
         
-        // Gera key aleatória
         const apiKey = crypto.randomBytes(32).toString('hex');
-        
-        // Armazena
         storeKey(apiKey);
         
-        console.log(`🔑 Nova key gerada para: ${username || userId}`);
+        console.log(`🔑 Nova key gerada para: ${username || userId || 'Anônimo'}`);
         
         res.json({
             success: true,
             key: apiKey,
-            expiresIn: 1800, // 30 minutos em segundos
+            expiresIn: 1800,
             expiresAt: new Date(Date.now() + 1800000).toISOString(),
             message: 'API Key gerada com sucesso!'
         });
@@ -468,36 +471,36 @@ app.post('/api/export', async (req, res) => {
         const { apiKey, data, format, name, description, publishToMarketplace, assetType } = req.body;
         
         if (!apiKey || !data) {
-            return res.status(400).json({ success: false, error: 'Dados incompletos (apiKey e data são obrigatórios)' });
+            return res.status(400).json({ 
+                success: false, 
+                error: 'Dados incompletos (apiKey e data são obrigatórios)' 
+            });
         }
         
-        // Valida API Key
         const validKey = getKey(apiKey);
         if (!validKey) {
-            return res.status(401).json({ success: false, error: 'API key inválida ou expirada' });
+            return res.status(401).json({ 
+                success: false, 
+                error: 'API key inválida ou expirada' 
+            });
         }
         
-        // Renova a key
         storeKey(apiKey);
         
         console.log(`📤 Exportando: ${name || 'Sem nome'}`);
         
-        // Cria o arquivo
         const fileContent = createRBXMX(data);
         const fileBuffer = Buffer.from(fileContent);
         const fileName = `${name || 'export'}_${Date.now()}.${format || 'rbxmx'}`;
         
         const result = {
             success: true,
-            downloadUrl: `${req.protocol}://${req.get('host')}/download/${fileName}`,
-            filePath: `/storage/emulated/0/Download/${fileName}`,
             fileName,
             fileData: fileBuffer.toString('base64'),
             fileSize: fileBuffer.length,
             timestamp: new Date().toISOString()
         };
         
-        // Upload para Roblox (se solicitado)
         if (publishToMarketplace) {
             console.log(`📦 Publicando no Marketplace...`);
             const uploadResult = await uploadToRoblox(
@@ -533,16 +536,20 @@ app.post('/api/import', async (req, res) => {
         const { apiKey, source, sourceValue, format } = req.body;
         
         if (!apiKey || !source || !sourceValue) {
-            return res.status(400).json({ success: false, error: 'Dados incompletos' });
+            return res.status(400).json({ 
+                success: false, 
+                error: 'Dados incompletos' 
+            });
         }
         
-        // Valida API Key
         const validKey = getKey(apiKey);
         if (!validKey) {
-            return res.status(401).json({ success: false, error: 'API key inválida ou expirada' });
+            return res.status(401).json({ 
+                success: false, 
+                error: 'API key inválida ou expirada' 
+            });
         }
         
-        // Renova a key
         storeKey(apiKey);
         
         console.log(`📥 Importando de: ${source}`);
@@ -550,12 +557,18 @@ app.post('/api/import', async (req, res) => {
         let fileBuffer;
         
         if (source === 'url') {
-            const response = await axios.get(sourceValue, { responseType: 'arraybuffer' });
+            const response = await axios.get(sourceValue, { 
+                responseType: 'arraybuffer',
+                timeout: 30000
+            });
             fileBuffer = Buffer.from(response.data);
         } else if (source === 'assetId') {
             const response = await axios.get(
                 `https://assetdelivery.roblox.com/v1/asset/?id=${sourceValue}`,
-                { responseType: 'arraybuffer' }
+                { 
+                    responseType: 'arraybuffer',
+                    timeout: 30000
+                }
             );
             fileBuffer = Buffer.from(response.data);
         } else if (source === 'file') {
@@ -586,7 +599,7 @@ app.post('/api/import', async (req, res) => {
 // ===================================================
 
 app.use((err, req, res, next) => {
-    console.error('❌ Erro:', err);
+    console.error('❌ Erro no middleware:', err);
     res.status(500).json({ 
         success: false, 
         error: 'Erro interno do servidor',
@@ -603,14 +616,12 @@ app.use((req, res) => {
 });
 
 // ===================================================
-// INICIAR SERVIDOR
+// INICIAR SERVIDOR COM TRATAMENTO DE ERROS
 // ===================================================
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`
 ╔════════════════════════════════════════════════════╗
-║                                                    ║
 ║     🎮  ROBLOX IMPORT/EXPORT SERVER  🎮           ║
-║                                                    ║
 ║     Status: ✅ ONLINE                              ║
-║     Porta:
+║     Porta: ${PORT}                 
